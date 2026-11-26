@@ -61,12 +61,6 @@ pub fn draw(ui: &mut Ui, view: ReaderView<'_>, actions: &mut Vec<Action>) -> Rea
             ui.scope_builder(egui::UiBuilder::new().max_rect(toolbar.shrink2(egui::vec2(20., 11.))), |ui| {
                 ui.horizontal(|ui| {
                     if controls::toolbar_button(ui, Icon::ArrowLeft, "Close article", false).clicked() { actions.push(Action::CloseReader); }
-                    if pdf && native {
-                        ui.add_space(6.);
-                        if let Some(choice) = controls::segmented(ui, &["Text", "PDF"], usize::from(pdf_mode)) {
-                            actions.push(Action::PdfMode(choice == 1));
-                        }
-                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if let Some(a) = article {
                             if controls::toolbar_button(ui, Icon::External, "Open original article", false).clicked() {
@@ -102,7 +96,17 @@ pub fn draw(ui: &mut Ui, view: ReaderView<'_>, actions: &mut Vec<Action>) -> Rea
                             let (gap, _) = ui.allocate_exact_size(egui::vec2(13., 20.), egui::Sense::hover());
                             ui.painter().line_segment([gap.center_top(), gap.center_bottom()], egui::Stroke::new(1., colors.divider));
                         }
-                        text_controls(ui, size, font, native, &mut layout, actions);
+                        // The Text | PDF switch sits with the other view controls;
+                        // text size and font only apply to the text view.
+                        if pdf && native {
+                            if let Some(choice) = controls::segmented(ui, &["Text", "PDF"], usize::from(pdf_mode)) {
+                                actions.push(Action::PdfMode(choice == 1));
+                            }
+                            ui.add_space(4.);
+                        }
+                        if !(pdf && native && pdf_mode) {
+                            text_controls(ui, size, font, native, &mut layout, actions);
+                        }
                     });
                 });
             });

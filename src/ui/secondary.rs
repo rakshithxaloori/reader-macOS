@@ -48,7 +48,7 @@ pub fn feeds(ui: &mut Ui, feeds: &[Feed], actions: &mut Vec<Action>) {
     overview(ui, feeds, &mut filter);
     ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
     ui.add_space(14.);
-    egui::ScrollArea::vertical().id_salt("feeds").show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("feeds").auto_shrink([false, false]).show(ui, |ui| {
         if feeds.is_empty() {
             controls::empty(
                 ui,
@@ -340,10 +340,10 @@ fn feed_row(
         FontId::new(20., FontFamily::Name("Georgia".into())),
         if paused { colors.muted } else { colors.green },
     );
-    let dot = if feed.error.is_some() {
-        colors.danger
-    } else if feed.activity != FeedActivity::Idle {
+    let dot = if feed.activity != FeedActivity::Idle {
         colors.accent
+    } else if feed.error.is_some() {
+        colors.danger
     } else if paused {
         colors.muted
     } else {
@@ -427,7 +427,13 @@ fn feed_row(
         });
         ui.add_space(10.);
     }
-    if let Some(error) = &feed.error {
+    // While a new check is queued or running, the state line says so; the
+    // previous error would be stale.
+    if let Some(error) = feed
+        .error
+        .as_deref()
+        .filter(|_| feed.activity == FeedActivity::Idle)
+    {
         feed_error(ui, feed, error, text_x - rect.left(), actions);
     }
     let full = egui::Rect::from_min_max(
@@ -461,67 +467,55 @@ fn feed_row(
     }
 }
 
+/// A failed check reads as one quiet line under the row: what went wrong and a
+/// Try again link. Long errors keep their details behind a disclosure.
 fn feed_error(ui: &mut Ui, feed: &Feed, error: &str, indent: f32, actions: &mut Vec<Action>) {
     let colors = crate::theme::palette(ui.ctx());
+    let summary = error.lines().next().unwrap_or(error);
     ui.horizontal(|ui| {
         ui.add_space(indent);
-        let width = ui.available_width() - ROW_INSET;
-        ui.vertical(|ui| {
-            ui.set_width(width);
-            egui::Frame::new()
-                .fill(colors.danger_fill)
-                .stroke(Stroke::new(1., colors.danger_border))
-                .corner_radius(9)
-                .inner_margin(egui::Margin {
-                    left: 12,
-                    right: 6,
-                    top: 6,
-                    bottom: 8,
-                })
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing.y = 2.;
-                    ui.horizontal(|ui| {
-                        let (mark, _) =
-                            ui.allocate_exact_size(vec2(14., 14.), egui::Sense::hover());
-                        icons::draw(ui, mark, icons::Icon::Warning, colors.danger);
-                        ui.label(
-                            RichText::new("Couldn't check this feed")
-                                .size(12.5)
-                                .color(colors.danger),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .add_enabled_ui(feed.activity == FeedActivity::Idle, |ui| {
-                                    controls::action(ui, "Try again", ButtonKind::Quiet)
-                                })
-                                .inner
-                                .clicked()
-                            {
-                                actions.push(Action::Command(Command::Feed {
-                                    id: feed.id.clone(),
-                                    action: FeedAction::Sync,
-                                }));
-                            }
-                        });
-                    });
-                    let summary = error.lines().next().unwrap_or(error);
-                    ui.add(
-                        egui::Label::new(RichText::new(summary).size(11.5).color(colors.ink))
-                            .truncate(),
-                    );
-                    if summary.len() < error.len() {
-                        egui::CollapsingHeader::new(RichText::new("Details").size(11.5)).show(
-                            ui,
-                            |ui| {
-                                ui.label(RichText::new(error).size(11.5).color(colors.ink));
-                            },
-                        );
-                    }
-                });
+        ui.spacing_mut().item_spacing.x = 6.;
+        let (mark, _) = ui.allocate_exact_size(vec2(13., 13.), egui::Sense::hover());
+        icons::draw(ui, mark, icons::Icon::Warning, colors.danger);
+        let width = (ui.available_width() - ROW_INSET - 80.).max(60.);
+        ui.scope(|ui| {
+            ui.set_max_width(width);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!("Couldn't check: {summary}"))
+                        .size(11.5)
+                        .color(colors.danger),
+                )
+                .truncate(),
+            );
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(ROW_INSET);
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("Try again").size(11.5).color(colors.green))
+                        .frame(false),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                actions.push(Action::Command(Command::Feed {
+                    id: feed.id.clone(),
+                    action: FeedAction::Sync,
+                }));
+            }
         });
     });
-    ui.add_space(14.);
+    if summary.len() < error.len() {
+        ui.horizontal(|ui| {
+            ui.add_space(indent + 19.);
+            egui::CollapsingHeader::new(RichText::new("Details").size(11.).color(colors.muted))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(error).size(11.5).color(colors.ink));
+                });
+        });
+    }
+    ui.add_space(12.);
 }
 
 fn initial(title: &str) -> String {
@@ -551,25 +545,19 @@ fn checked_label(value: &str, now: chrono::DateTime<chrono::Utc>) -> String {
 }
 
 fn feed_actions(ui: &mut Ui, feed: &Feed, actions: &mut Vec<Action>) {
-    let colors = crate::theme::palette(ui.ctx());
     ui.spacing_mut().item_spacing.x = 4.;
     let more = controls::icon_button(ui, icons::Icon::More, "More actions", false);
     egui::Popup::menu(&more)
         .align(egui::emath::RectAlign::BOTTOM_END)
         .align_alternatives(&[])
         .show(|ui| {
-            if controls::action(ui, "Copy feed address", ButtonKind::Quiet).clicked() {
+            controls::menu_style(ui);
+            if controls::menu_item(ui, "Copy feed address", false).clicked() {
                 ui.ctx().copy_text(feed.url.clone());
                 ui.close();
             }
-            if ui
-                .add(
-                    egui::Button::new(RichText::new("Unsubscribe").size(12.).color(colors.danger))
-                        .frame(false)
-                        .min_size(vec2(0., controls::ACTION_HEIGHT)),
-                )
-                .clicked()
-            {
+            ui.separator();
+            if controls::menu_item(ui, "Unsubscribe", true).clicked() {
                 actions.push(Action::Command(Command::Feed {
                     id: feed.id.clone(),
                     action: FeedAction::Remove,

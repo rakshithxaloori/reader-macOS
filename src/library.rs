@@ -112,11 +112,31 @@ pub fn articles(c: &Connection, q: &Query, offset: usize) -> Result<Vec<Article>
         )?
         .collect::<rusqlite::Result<_>>()?)
 }
-pub fn publications(c: &Connection, q: &Query) -> Result<Vec<(String, u32)>> {
+pub fn publications(c: &Connection, q: &Query) -> Result<Vec<Publication>> {
     let mut q = q.clone();
     q.publication.clear();
     let v = query_values(&q);
-    Ok(c.prepare(&format!("SELECT publication_hostname(a.url),count(*) FROM articles a WHERE {FILTER} GROUP BY publication_hostname(a.url) ORDER BY publication_hostname(a.url)"))?.query_map(params![v[0],v[1],v[2],v[3],v[4],v[5],v[6]],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<_>>()?)
+    let rows: Vec<(String, String, u32)> = c.prepare(&format!("SELECT publication_hostname(a.url),trim(a.site),count(*) FROM articles a WHERE {FILTER} GROUP BY 1,2"))?.query_map(params![v[0],v[1],v[2],v[3],v[4],v[5],v[6]],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+    // One pass groups by host; the most frequent non-empty label names it.
+    let mut by_host = std::collections::BTreeMap::<String, (u32, Option<(u32, String)>)>::new();
+    for (host, site, count) in rows {
+        let entry = by_host.entry(host).or_default();
+        entry.0 += count;
+        let site = site.trim_start_matches("www.");
+        if !site.is_empty() && entry.1.as_ref().is_none_or(|(best, _)| count > *best) {
+            entry.1 = Some((count, site.to_owned()));
+        }
+    }
+    let mut out: Vec<_> = by_host
+        .into_iter()
+        .map(|(host, (count, name))| Publication {
+            name: name.map_or_else(|| host.clone(), |(_, name)| name),
+            host,
+            count,
+        })
+        .collect();
+    out.sort_by_cached_key(|p| (p.name.to_lowercase(), p.host.clone()));
+    Ok(out)
 }
 pub fn matching_count(c: &Connection, q: &Query) -> Result<u32> {
     let v = query_values(q);
@@ -422,6 +442,13 @@ pub fn stored_pdf(c: &Connection, id: &MagazineId) -> Result<Vec<u8>> {
         params![OWNER, id.0],
         |r| r.get(0),
     )?)
+}
+/// Cached icons for grouped publication rows (lean libraries only).
+pub fn publication_logos(c: &Connection, pubs: &[Publication]) -> Result<Vec<(String, Vec<u8>)>> {
+    if !crate::db_compat::is_lean(c)? {
+        return Ok(vec![]);
+    }
+    crate::icons::cached(c, &crate::icons::host_requests(pubs))
 }
 pub fn logos(c: &Connection, articles: &[Article]) -> Result<Vec<(String, Vec<u8>)>> {
     if crate::db_compat::is_lean(c)? {

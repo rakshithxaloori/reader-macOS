@@ -15,8 +15,8 @@ pub fn draw(
     actions: &mut Vec<Action>,
 ) {
     let colors = crate::theme::palette(ui.ctx());
-    egui::ScrollArea::vertical().id_salt("whatsapp").show(ui, |ui| {
-        ui.set_max_width(ui.available_width().min(680.));
+    egui::ScrollArea::vertical().id_salt("whatsapp").auto_shrink([false, false]).show(ui, |ui| {
+        ui.set_max_width(ui.available_width().min(super::PAGE_WIDTH));
         super::secondary::header(ui, "WhatsApp", "Save a link from your own chat.");
         controls::panel(ui).show(ui, |ui| {
             ui.set_width(ui.available_width());

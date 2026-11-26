@@ -1,3 +1,5 @@
+/// Shared content column for single-column pages (WhatsApp, Import / export).
+pub const PAGE_WIDTH: f32 = 880.;
 pub mod controls;
 pub mod dialog;
 pub mod library;

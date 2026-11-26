@@ -364,14 +364,14 @@ pub fn draw(ui: &mut Ui, issues: &[Magazine], state: &mut State, actions: &mut V
         review(ui, state, actions);
         return;
     }
-    egui::ScrollArea::vertical().id_salt("magazine-list").show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("magazine-list").auto_shrink([false, false]).show(ui, |ui| {
         heading(ui, "FROM SCREEN TO PAPER", "Magazines.");
         ui.label(RichText::new("Gather a few good reads. Give them a life on paper.").size(13.).color(colors.muted));
         ui.add_space(18.);
         ui.horizontal_wrapped(|ui| {
             if controls::action(ui, "Create a magazine", ButtonKind::Primary).clicked() { actions.push(Action::NewManual); }
             if controls::action(ui, "Suggest magazines", ButtonKind::Secondary).clicked() { actions.push(Action::Command(Command::Plans)); }
-            if controls::action(ui, "Exclusions", ButtonKind::Quiet).clicked() { state.exclusions_open = true; state.policies_pending = true; actions.push(Action::Command(Command::Policies)); }
+            if controls::action(ui, "Exclusions", ButtonKind::Secondary).clicked() { state.exclusions_open = true; state.policies_pending = true; actions.push(Action::Command(Command::Policies)); }
         });
         ui.add_space(22.);
         if let Some(plans) = &state.plans { proposals(ui, plans, actions); ui.add_space(22.); }
@@ -672,7 +672,7 @@ fn exclusions(ui: &mut Ui, state: &mut State, actions: &mut Vec<Action>) {
     }
     let policies = state.policies.clone();
     let mut close = false;
-    let modal = egui::Modal::new(egui::Id::new("magazine-exclusions"))
+    let modal = controls::modal(egui::Id::new("magazine-exclusions"), ui.ctx())
         .frame(controls::panel(ui))
         .show(ui.ctx(), |ui| {
             ui.set_width((ui.ctx().content_rect().width() - 96.).clamp(240., 560.));
@@ -804,16 +804,23 @@ fn proposals(ui: &mut Ui, plans: &Plans, actions: &mut Vec<Action>) {
                     &format!("{} articles", proposal.articles.len()),
                     colors.green,
                 );
-                controls::badge(ui, &format!("{} words", proposal.word_count), colors.muted);
+                controls::badge(
+                    ui,
+                    &format!("{} words", crate::domain::count_label(proposal.word_count)),
+                    colors.muted,
+                );
             });
             ui.add_space(10.);
             for article in &proposal.articles {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(&article.title);
                     ui.label(
-                        RichText::new(format!("{} words", article.word_count))
-                            .size(11.)
-                            .color(colors.muted),
+                        RichText::new(format!(
+                            "{} words",
+                            crate::domain::count_label(article.word_count.into())
+                        ))
+                        .size(11.)
+                        .color(colors.muted),
                     );
                     if controls::action(ui, "Exclude", ButtonKind::Quiet).clicked() {
                         actions.push(Action::Command(Command::Exclude {
@@ -868,8 +875,11 @@ fn review(ui: &mut Ui, state: &mut State, actions: &mut Vec<Action>) {
         actions.push(Action::Close);
     }
     ui.add_space(12.);
+    // Full width, so the scroll bar sits at the window edge instead of
+    // floating beside the narrowest content.
     egui::ScrollArea::vertical()
         .id_salt("magazine-review")
+        .auto_shrink([false, false])
         .show(ui, |ui| {
             if ui.available_width() >= 640. {
                 ui.horizontal_top(|ui| {
@@ -951,8 +961,12 @@ fn review(ui: &mut Ui, state: &mut State, actions: &mut Vec<Action>) {
                     )),
             );
             ui.add_space(12.);
+            // One column width for every card, so titles of different lengths
+            // do not leave ragged right edges.
+            let card_width = ui.available_width().min(760.);
             for article in &issue.articles {
                 controls::panel(ui).inner_margin(16).show(ui, |ui| {
+                    ui.set_width(card_width - 34.);
                     ui.horizontal_top(|ui| {
                         ui.label(
                             RichText::new(format!("{:02}", article.position + 1))
@@ -964,8 +978,11 @@ fn review(ui: &mut Ui, state: &mut State, actions: &mut Vec<Action>) {
                             ui.label(RichText::new(&article.title).size(15.).strong());
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(
-                                    RichText::new(format!("{} words", article.word_count))
-                                        .color(colors.muted),
+                                    RichText::new(format!(
+                                        "{} words",
+                                        crate::domain::count_label(article.word_count.into())
+                                    ))
+                                    .color(colors.muted),
                                 );
                                 controls::copy_status(ui, article.content_status);
                                 ui.hyperlink_to("Open original", &article.url);
@@ -1008,11 +1025,13 @@ fn edition_header(ui: &mut Ui, edition: &Edition) {
             "{} · {} articles · {} words",
             issue.paper_size.as_str(),
             issue.articles.len(),
-            issue
-                .articles
-                .iter()
-                .map(|a| u64::from(a.word_count))
-                .sum::<u64>()
+            crate::domain::count_label(
+                issue
+                    .articles
+                    .iter()
+                    .map(|a| u64::from(a.word_count))
+                    .sum::<u64>()
+            )
         ));
         if let Some(artifact) = &edition.artifact {
             controls::badge(ui, &format!("{} pages", artifact.page_count), colors.green);
@@ -1243,7 +1262,7 @@ fn confirmations(ui: &mut Ui, state: &mut State, edition: &Edition, actions: &mu
         .is_some_and(|p| matches!(p.state, ProductionState::Queued | ProductionState::Running));
     if state.delete_confirm && edition.issue.finalized_at.is_none() {
         let mut close = false;
-        let modal=egui::Modal::new(egui::Id::new("delete-edition-confirmation")).frame(controls::panel(ui)).show(ui.ctx(),|ui|{
+        let modal=controls::modal(egui::Id::new("delete-edition-confirmation"),ui.ctx()).frame(controls::panel(ui)).show(ui.ctx(),|ui|{
             ui.set_width((ui.ctx().content_rect().width()-96.).clamp(240.,460.));
             ui.label(RichText::new("Delete this draft?").size(22.).strong());ui.label(RichText::new(&edition.issue.title).size(16.));
             ui.label(format!("Remove this editable draft and its {} frozen article copies, artwork and production files. Your reading-list articles keep their current state.",edition.issue.articles.len()));
@@ -1270,7 +1289,7 @@ fn confirmations(ui: &mut Ui, state: &mut State, edition: &Edition, actions: &mu
             return;
         }
         let mut close = false;
-        let modal=egui::Modal::new(egui::Id::new("remove-edition-pdf-confirmation")).frame(controls::panel(ui)).show(ui.ctx(),|ui|{
+        let modal=controls::modal(egui::Id::new("remove-edition-pdf-confirmation"),ui.ctx()).frame(controls::panel(ui)).show(ui.ctx(),|ui|{
             ui.set_width((ui.ctx().content_rect().width()-96.).clamp(240.,500.));
             ui.label(RichText::new("Export before freeing local space").size(21.).strong());ui.label(RichText::new(&edition.issue.title).size(16.));
             ui.label("Choose a destination outside the library. The exact PDF is verified before its local copy is removed. Keep the exported file: this app will retain edition metadata, checksums, provenance and printed-article references.");
@@ -1369,6 +1388,7 @@ fn editor(ui: &mut Ui, state: &mut State, actions: &mut Vec<Action>) {
     ui.add_space(14.);
     egui::ScrollArea::vertical()
         .id_salt("magazine-editor")
+        .auto_shrink([false, false])
         .show(ui, |ui| {
             controls::panel(ui).show(ui, |ui| {
                 ui.label(RichText::new("The edition").size(17.).strong());
@@ -1428,7 +1448,7 @@ fn editor(ui: &mut Ui, state: &mut State, actions: &mut Vec<Action>) {
                 .find(|article| article.article_id == article_id)
         }) {
             let mut close = false;
-            let modal = egui::Modal::new(egui::Id::new("edition-source-repairs"))
+            let modal = controls::modal(egui::Id::new("edition-source-repairs"), ui.ctx())
                 .frame(controls::panel(ui))
                 .show(ui.ctx(), |ui| {
                     ui.set_width((ui.ctx().content_rect().width() - 96.).clamp(240., 650.));

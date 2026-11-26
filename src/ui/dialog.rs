@@ -36,11 +36,14 @@ pub fn draw(ctx: &Context, kind: Kind<'_>, input: &mut Input) -> Option<Decision
         Kind::Delete { .. } => "Delete articles",
         Kind::Details { title, .. } => title,
     };
-    let response = egui::Modal::new(egui::Id::new(if details {
-        "reading-details"
-    } else {
-        "library-dialog"
-    }))
+    let response = controls::modal(
+        egui::Id::new(if details {
+            "reading-details"
+        } else {
+            "library-dialog"
+        }),
+        ctx,
+    )
     .frame(egui::Frame::popup(&ctx.global_style()).inner_margin(24))
     .show(ctx, |ui| {
         ui.set_width(if details {

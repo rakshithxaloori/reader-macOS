@@ -36,6 +36,16 @@ impl Request {
             source: article.logo_url.clone(),
         })
     }
+    /// A grouped publication row knows only its host; the cache key matches
+    /// article requests, so an icon fetched for either serves both.
+    pub fn for_host(host: &str) -> Result<Self> {
+        let page = network::normalize_url(&format!("https://{host}/"))?;
+        Ok(Self {
+            host: host.to_owned(),
+            page,
+            source: None,
+        })
+    }
     pub fn key(&self) -> String {
         format!("publication-icon:{}", self.host)
     }
@@ -100,10 +110,22 @@ pub fn cached_logos(
     connection: &rusqlite::Connection,
     articles: &[Article],
 ) -> Result<Vec<(String, Vec<u8>)>> {
-    if crate::storage::database_path(connection)?.is_none() {
+    cached(connection, &requests(articles))
+}
+pub fn host_requests(publications: &[crate::domain::Publication]) -> Vec<Request> {
+    publications
+        .iter()
+        .filter_map(|p| Request::for_host(&p.host).ok())
+        .collect()
+}
+pub fn cached(
+    connection: &rusqlite::Connection,
+    requests: &[Request],
+) -> Result<Vec<(String, Vec<u8>)>> {
+    if requests.is_empty() || crate::storage::database_path(connection)?.is_none() {
         return Ok(vec![]);
     }
-    let keys: Vec<_> = requests(articles).iter().map(Request::key).collect();
+    let keys: Vec<_> = requests.iter().map(Request::key).collect();
     let keys: Vec<_> = keys.iter().map(String::as_str).collect();
     let copies = Storage::for_database(connection)?.cache_get_many(&keys)?;
     Ok(keys
@@ -201,11 +223,14 @@ pub fn spawn(
                 let mut generation=None;
                 let mut pending=VecDeque::new();
                 let mut seen=HashSet::new();
+                // Hosts with no usable icon are not retried until relaunch, so
+                // grouped lists do not refetch missing favicons on every query.
+                let mut missing=HashSet::new();
                 loop {
                     let Some(request)=pending.pop_front() else {
                         if receiver.changed().await.is_err(){break;}
                         let Some(Batch{generation:next,requests})=receiver.borrow_and_update().clone() else {break;};
-                        merge(next,requests,&mut generation,&mut pending,&mut seen);
+                        merge(next,requests,&mut generation,&mut pending,&mut seen,&missing);
                         continue;
                     };
                     let current=generation.expect("Batch supplied requests");
@@ -215,10 +240,13 @@ pub fn spawn(
                             if changed.is_err(){break;}
                             let Some(Batch{generation:next,requests})=receiver.borrow_and_update().clone() else {break;};
                             if next==current {pending.push_front(request.clone());}
-                            merge(next,requests,&mut generation,&mut pending,&mut seen);
+                            merge(next,requests,&mut generation,&mut pending,&mut seen,&missing);
                         },
-                        result=&mut work=>if let Ok(Some(bytes))=result
-                            && events.try_send(Event::Logos{generation:current,logos:vec![(request.key(),bytes)]}).is_ok(){ctx.request_repaint();}
+                        result=&mut work=>match result {
+                            Ok(Some(bytes))=>if events.try_send(Event::Logos{generation:current,logos:vec![(request.key(),bytes)]}).is_ok(){ctx.request_repaint();},
+                            _ if !offline=>{missing.insert(request.host.clone());},
+                            _=>{}
+                        }
                     }
                 }
             });
@@ -239,6 +267,7 @@ fn merge(
     generation: &mut Option<u64>,
     pending: &mut VecDeque<Request>,
     seen: &mut HashSet<String>,
+    missing: &HashSet<String>,
 ) {
     if *generation != Some(next) {
         pending.clear();
@@ -246,7 +275,7 @@ fn merge(
         *generation = Some(next);
     }
     for request in requests {
-        if seen.insert(request.host.clone()) {
+        if !missing.contains(&request.host) && seen.insert(request.host.clone()) {
             pending.push_back(request);
         }
     }
@@ -376,6 +405,7 @@ mod tests {
             &mut generation,
             &mut pending,
             &mut seen,
+            &HashSet::new(),
         );
         assert_eq!(pending.len(), 1);
         merge(
@@ -384,6 +414,21 @@ mod tests {
             &mut generation,
             &mut pending,
             &mut seen,
+            &HashSet::new(),
+        );
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].key(), "publication-icon:other.org");
+        let missing = HashSet::from(["third.org".to_owned()]);
+        merge(
+            3,
+            vec![
+                request("https://third.org/d", None),
+                Request::for_host("other.org").unwrap(),
+            ],
+            &mut generation,
+            &mut pending,
+            &mut seen,
+            &missing,
         );
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].key(), "publication-icon:other.org");

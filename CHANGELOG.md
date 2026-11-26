@@ -5,6 +5,39 @@ All notable changes to Reader (formerly Read Later and Reading List) are recorde
 a library conversion, a minor version for features and redesigns, and a patch
 version for fixes. Each release is a `vX.Y.Z` tag on `main`.
 
+## [0.3.9] - 2026-11-26
+
+### Changed
+- Group by publication: each publication row matches an article row's height,
+  shows the publication's icon and name (with its web address underneath), and
+  drops the duplicate count badge. Opening a publication shows its name in the
+  header; feed drill-ins use the same header.
+- Choosing articles to delete or for a magazine shows a tidier card with the
+  count, Cancel and the action on one line, and lists articles with checkboxes
+  even while grouped by publication.
+- Popup menus (list actions, publication and feed actions) use full-width rows
+  with ordinary text, separators and red destructive items.
+- Feed errors are one quiet line with Try again; a feed that is queued or being
+  checked no longer shows its previous error.
+- The reader's font picker matches the other text controls; the Text | PDF
+  switch sits beside them, and text controls hide in PDF view.
+- The reader's "Fetched" line sits closer to the byline.
+- Status tags are pill-shaped, disabled primary buttons stay legible, dialogs
+  dim the window more in Dark, and the Unread/Read switch is slightly larger.
+- Magazine editions list their articles in equal-width cards, and word counts
+  use thousands separators.
+- WhatsApp and Import / export share one page width; import activity shows only
+  non-empty counts.
+
+### Fixed
+- Paragraphs no longer start with a stray space when the page's HTML indents
+  its text.
+- Grouped publication rows keep their height while hovered, and page scroll
+  bars sit at the window edge instead of beside the content.
+- Import activity says "1 record", not "1 records".
+- The unread marker in Favorites and Archive sits in the left margin instead of
+  under the publication icon.
+
 ## [0.3.8] - 2026-11-10
 
 ### Added

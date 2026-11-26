@@ -110,7 +110,11 @@ fn query_searches_previews_groups_hosts_and_orders_missing_metadata_last() {
     }
     assert_eq!(
         library::publications(&c, &q).unwrap(),
-        vec![("example.com".into(), 2)]
+        vec![Publication {
+            host: "example.com".into(),
+            name: "example.com".into(),
+            count: 2
+        }]
     );
 }
 #[test]
