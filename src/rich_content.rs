@@ -75,7 +75,8 @@ pub struct RichDocument {
 impl RichDocument {
     pub fn parse(saved_html: &str) -> Self {
         let html = Html::parse_fragment(saved_html);
-        let blocks = parse_children(html.root_element(), 0);
+        let mut blocks = parse_children(html.root_element(), 0);
+        trim_blocks(&mut blocks);
         let image_layouts = html
             .select(&selector("img[data-layout]"))
             .filter_map(|e| {
@@ -318,6 +319,57 @@ fn runs(element: ElementRef<'_>) -> Vec<Inline> {
     let mut out = Vec::new();
     visit(element, InlineStyle::default(), &mut out);
     out
+}
+/// Source indentation inside `<p>` collapses to a space at the paragraph's
+/// edges. Strip those edge spaces (and spaces around `<br>`) so prose starts
+/// flush. Code keeps its whitespace.
+fn trim_runs(runs: &mut Vec<Inline>) {
+    let mut at_edge = true;
+    for run in runs.iter_mut() {
+        if run.style.code {
+            at_edge = false;
+            continue;
+        }
+        run.text = run.text.replace(" \n", "\n").replace("\n ", "\n");
+        if at_edge {
+            run.text = run.text.trim_start_matches(' ').to_owned();
+        }
+        if !run.text.is_empty() {
+            at_edge = run.text.ends_with('\n');
+        }
+    }
+    at_edge = true;
+    for run in runs.iter_mut().rev() {
+        if run.style.code {
+            at_edge = false;
+            continue;
+        }
+        if at_edge {
+            run.text = run.text.trim_end_matches(' ').to_owned();
+        }
+        if !run.text.is_empty() {
+            at_edge = run.text.starts_with('\n');
+        }
+    }
+    runs.retain(|r| !r.text.is_empty());
+}
+fn trim_blocks(blocks: &mut [Block]) {
+    for block in blocks {
+        match block {
+            Block::Paragraph { runs, .. } => trim_runs(runs),
+            Block::Table { caption, rows } => {
+                trim_runs(caption);
+                for cell in rows.iter_mut().flatten() {
+                    trim_blocks(&mut cell.content);
+                }
+            }
+            Block::Details { summary, content } => {
+                trim_runs(summary);
+                trim_blocks(content);
+            }
+            Block::Image { .. } | Block::Rule => {}
+        }
+    }
 }
 fn collapse_whitespace(text: &str) -> String {
     let mut out = String::new();
@@ -1019,13 +1071,32 @@ mod tests {
         assert!(page.contains("messageHandlers.reader"));
     }
     #[test]
+    fn paragraph_edges_drop_source_indentation() {
+        let doc = RichDocument::parse(
+            "<p>\n <em>Lead</em> text\n</p><p>\nOne<br>\n two </p><pre><code>  keep  </code></pre>",
+        );
+        let texts: Vec<String> = doc
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph { runs, .. } => {
+                    Some(runs.iter().map(|r| r.text.as_str()).collect())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts[0], "Lead text");
+        assert_eq!(texts[1], "One\ntwo");
+        assert!(texts[2].contains("  keep  "));
+    }
+    #[test]
     fn inline_image_keeps_its_position_between_prose() {
         let document = RichDocument::parse(
             "<p>Before <a href='https://example.org/full'><img src='/api/media/x'></a> after.</p>",
         );
-        assert!(matches!(&document.blocks[0],Block::Paragraph{runs,..}if runs[0].text=="Before "));
+        assert!(matches!(&document.blocks[0],Block::Paragraph{runs,..}if runs[0].text=="Before"));
         assert!(matches!(&document.blocks[1],Block::Image{source,..}if source=="/api/media/x"));
-        assert!(matches!(&document.blocks[2],Block::Paragraph{runs,..}if runs[0].text==" after."));
+        assert!(matches!(&document.blocks[2],Block::Paragraph{runs,..}if runs[0].text=="after."));
         assert_eq!(
             document.image_links.get("/api/media/x").map(String::as_str),
             Some("https://example.org/full")
@@ -2016,8 +2087,11 @@ pub mod native {
         font_picker.selectItemAtIndex(1);
         font_picker.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         font_picker.setControlSize(NSControlSize::Small);
+        // Borderless with the toolbar's green text, so it reads as one of the
+        // reader's own text buttons beside A+ and A−, not a grey system field.
         font_picker.setBezelStyle(NSBezelStyle::AccessoryBarAction);
-        font_picker.setContentTintColor(Some(&native_color(Appearance::Light.palette().ink)));
+        font_picker.setBordered(false);
+        font_picker.setContentTintColor(Some(&native_color(Appearance::Light.palette().green)));
         unsafe {
             font_picker.setTarget(Some(target));
             font_picker.setAction(Some(sel!(readerFontChoice:)));
@@ -3420,7 +3494,7 @@ pub mod native {
             unsafe { self.pdf.setBackgroundColor(&native_color(colors.sidebar)) };
             self.font_picker.setAppearance(appearance.as_deref());
             self.font_picker
-                .setContentTintColor(Some(&native_color(colors.ink)));
+                .setContentTintColor(Some(&native_color(colors.green)));
             self.scroll.setBackgroundColor(&native_color(colors.reader));
             self.document_view.ivars().appearance.set(self.appearance);
             self.document_view.setNeedsDisplay(true);
@@ -3756,7 +3830,9 @@ pub mod native {
             }
             let header_height = layout_text(&self.header_text, content_width);
             self.header_text.setFrameOrigin(NSPoint::new(inset, 38.0));
-            let mut y = 38.0 + header_height + 24.0;
+            // The header's last paragraph already carries its space-after, so
+            // the fetch line and notices sit close under the byline.
+            let mut y = 38.0 + header_height + 6.0;
             if !self.notice_title.string().is_empty() {
                 let title_height = layout_text(&self.notice_title, content_width);
                 self.notice_title.setFrameOrigin(NSPoint::new(inset, y));

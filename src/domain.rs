@@ -148,6 +148,14 @@ impl CopyStatus {
         }
     }
 }
+/// One publication in the grouped list. `host` is the filter key; `name` is
+/// the label most of its articles carry, or the host when none has one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Publication {
+    pub host: String,
+    pub name: String,
+    pub count: u32,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Article {
     pub id: ArticleId,
@@ -258,8 +266,36 @@ impl ArrivalKind {
     }
 }
 
+/// Whole numbers with thousands separators, e.g. 159228 -> "159,228".
+pub fn count_label(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
 pub fn date_label(value: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|d| d.format("%b %-d, %Y").to_string())
         .unwrap_or_else(|_| value.chars().take(10).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn count_label_groups_thousands() {
+        for (value, label) in [
+            (0, "0"),
+            (999, "999"),
+            (1000, "1,000"),
+            (159_228, "159,228"),
+            (1_234_567, "1,234,567"),
+        ] {
+            assert_eq!(super::count_label(value), label);
+        }
+    }
 }

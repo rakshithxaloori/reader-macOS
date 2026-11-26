@@ -14,7 +14,7 @@ pub struct State<'a> {
     pub grouped: bool,
     pub logos: &'a std::collections::HashMap<String, egui::TextureHandle>,
     pub rows: &'a [Article],
-    pub publications: &'a [(String, u32)],
+    pub publications: &'a [crate::domain::Publication],
     pub selected: Option<&'a ArticleId>,
     pub selection: &'a [ArticleId],
     pub selecting: bool,
@@ -62,58 +62,56 @@ pub fn draw(ui: &mut Ui, state: State<'_>, actions: &mut Vec<Action>) -> f32 {
                         .align(egui::emath::RectAlign::BOTTOM_END)
                         .align_alternatives(&[])
                         .show(|ui| {
-                            if controls::action(
-                                ui,
-                                "Choose articles for a magazine",
-                                ButtonKind::Quiet,
-                            )
-                            .clicked()
+                            controls::menu_style(ui);
+                            if controls::menu_item(ui, "Choose articles for a magazine", false)
+                                .clicked()
                             {
                                 actions.push(Action::SelectMagazine);
                                 ui.close();
                             }
-                            if controls::action(ui, "Select articles to delete", ButtonKind::Quiet)
-                                .clicked()
+                            if controls::menu_item(ui, "Select articles to delete", false).clicked()
                             {
                                 actions.push(Action::SelectDelete);
                                 ui.close();
                             }
-                            if controls::action(ui, "Re-fetch all articles", ButtonKind::Quiet)
-                                .clicked()
-                            {
+                            if controls::menu_item(ui, "Re-fetch all articles", false).clicked() {
                                 actions.push(Action::Command(Command::RefetchAll));
                                 ui.close();
                             }
-                            if (state.grouped && !q.publication.is_empty() || !q.feed.is_empty())
+                            let narrowed = state.grouped && !q.publication.is_empty();
+                            if (narrowed || !q.feed.is_empty())
                                 && q.scope == crate::domain::Scope::Inbox
-                                && controls::action(
+                            {
+                                ui.separator();
+                                if controls::menu_item(
                                     ui,
                                     if q.feed.is_empty() {
                                         "Archive all articles in this publication"
                                     } else {
                                         "Archive all articles in this feed"
                                     },
-                                    ButtonKind::Quiet,
+                                    false,
                                 )
                                 .clicked()
-                            {
-                                actions.push(Action::Command(Command::ArchiveMatching(q.clone())));
-                                ui.close();
+                                {
+                                    actions
+                                        .push(Action::Command(Command::ArchiveMatching(q.clone())));
+                                    ui.close();
+                                }
                             }
-                            if state.grouped
-                                && !q.publication.is_empty()
-                                && controls::action(
-                                    ui,
-                                    "Delete matching articles",
-                                    ButtonKind::Danger,
-                                )
-                                .clicked()
-                            {
-                                actions.push(Action::ConfirmDeleteMatching {
-                                    query: q.clone(),
-                                    expected: state.total,
-                                });
-                                ui.close();
+                            if narrowed {
+                                if q.scope != crate::domain::Scope::Inbox {
+                                    ui.separator();
+                                }
+                                if controls::menu_item(ui, "Delete matching articles…", true)
+                                    .clicked()
+                                {
+                                    actions.push(Action::ConfirmDeleteMatching {
+                                        query: q.clone(),
+                                        expected: state.total,
+                                    });
+                                    ui.close();
+                                }
                             }
                         });
                     let unread = q.read == ReadFilter::Unread;
@@ -249,90 +247,121 @@ pub fn draw(ui: &mut Ui, state: State<'_>, actions: &mut Vec<Action>) -> f32 {
                     egui::StrokeKind::Outside,
                 );
             }
-            if !q.feed.is_empty() {
-                ui.horizontal(|ui| {
-                    if controls::icon_button(ui, Icon::ArrowLeft, "Back to feeds", false).clicked()
-                    {
+            // Feed and publication drill-ins share one back row: arrow plus the
+            // name in row-title weight.
+            let drill = if !q.feed.is_empty() {
+                Some((q.feed_title.clone(), "Back to feeds"))
+            } else if state.grouped && !q.publication.is_empty() {
+                Some((
+                    state
+                        .publications
+                        .iter()
+                        .find(|p| p.host == q.publication)
+                        .map_or(q.publication.clone(), |p| p.name.clone()),
+                    "All publications",
+                ))
+            } else {
+                None
+            };
+            if let Some((name, back_label)) = drill {
+                ui.add_space(2.);
+                let back = ui
+                    .horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.;
+                        let back = controls::icon_button(ui, Icon::ArrowLeft, back_label, false);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(name)
+                                    .font(FontId::new(
+                                        15.,
+                                        egui::FontFamily::Name("System Semibold".into()),
+                                    ))
+                                    .color(colors.ink),
+                            )
+                            .truncate(),
+                        );
+                        back
+                    })
+                    .inner;
+                if back.clicked() {
+                    if q.feed.is_empty() {
+                        q.publication.clear();
+                    } else {
                         actions.push(Action::Navigate(View::Feeds));
                     }
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(format!("{} · all articles", q.feed_title))
-                                .size(12.)
-                                .strong(),
-                        )
-                        .truncate(),
-                    );
-                });
-            } else if state.grouped && !q.publication.is_empty() {
-                ui.horizontal(|ui| {
-                    if controls::icon_button(ui, Icon::ArrowLeft, "Back to publications", false)
-                        .clicked()
-                    {
-                        q.publication.clear();
-                    }
-                    ui.add(
-                        egui::Label::new(RichText::new(&q.publication).size(12.).strong())
-                            .truncate(),
-                    );
-                });
+                }
             }
             if state.selecting {
-                ui.add_space(4.);
+                ui.add_space(8.);
                 egui::Frame::new()
-                    .fill(colors.selected)
-                    .corner_radius(8)
-                    .inner_margin(10)
+                    .fill(colors.reader)
+                    .stroke(egui::Stroke::new(1., colors.divider))
+                    .corner_radius(10)
+                    .inner_margin(egui::Margin::symmetric(12, 10))
                     .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.spacing_mut().item_spacing.y = 4.;
                         ui.label(
                             RichText::new(if state.selecting_delete {
                                 "Choose articles to delete"
                             } else {
                                 "Choose articles for your magazine"
                             })
-                            .size(12.)
-                            .strong()
-                            .color(colors.green),
+                            .font(FontId::new(
+                                13.,
+                                egui::FontFamily::Name("System Semibold".into()),
+                            ))
+                            .color(colors.ink),
                         );
-                        if !state.selecting_delete {
-                            ui.label(
-                                RichText::new("Click articles in the order you want to read them.")
-                                    .size(11.)
-                                    .color(colors.green),
-                            );
-                        }
+                        ui.label(
+                            RichText::new(if state.selecting_delete {
+                                "Click articles to select them."
+                            } else {
+                                "Click articles in the order you want to read them."
+                            })
+                            .size(11.5)
+                            .color(colors.muted),
+                        );
+                        ui.add_space(4.);
                         ui.horizontal(|ui| {
                             ui.label(
                                 RichText::new(format!("{} selected", state.selection.len()))
-                                    .size(11.)
-                                    .color(colors.green),
+                                    .size(11.5)
+                                    .color(colors.muted),
                             );
-                            if controls::action(ui, "Cancel", ButtonKind::Quiet).clicked() {
-                                actions.push(Action::CancelSelection);
-                            }
-                        });
-                        ui.add_enabled_ui(!state.selection.is_empty(), |ui| {
-                            if controls::action(
-                                ui,
-                                if state.selecting_delete {
-                                    "Delete selected"
-                                } else {
-                                    "Create draft"
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.add_enabled_ui(!state.selection.is_empty(), |ui| {
+                                        if controls::action(
+                                            ui,
+                                            if state.selecting_delete {
+                                                "Delete selected"
+                                            } else {
+                                                "Create draft"
+                                            },
+                                            if state.selecting_delete {
+                                                ButtonKind::Danger
+                                            } else {
+                                                ButtonKind::Primary
+                                            },
+                                        )
+                                        .clicked()
+                                        {
+                                            actions.push(if state.selecting_delete {
+                                                Action::ConfirmDelete(state.selection.to_vec())
+                                            } else {
+                                                Action::DraftDialog
+                                            });
+                                        }
+                                    });
+                                    if controls::action(ui, "Cancel", ButtonKind::Secondary)
+                                        .clicked()
+                                    {
+                                        actions.push(Action::CancelSelection);
+                                    }
                                 },
-                                if state.selecting_delete {
-                                    ButtonKind::Danger
-                                } else {
-                                    ButtonKind::Primary
-                                },
-                            )
-                            .clicked()
-                            {
-                                actions.push(if state.selecting_delete {
-                                    Action::ConfirmDelete(state.selection.to_vec())
-                                } else {
-                                    Action::DraftDialog
-                                });
-                            }
+                            );
                         });
                     });
             }
@@ -346,88 +375,110 @@ pub fn draw(ui: &mut Ui, state: State<'_>, actions: &mut Vec<Action>) -> f32 {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.;
+            // Selection needs article checkboxes, so it lists articles flat.
             if state.grouped
+                && !state.selecting
                 && state.query.publication.is_empty()
                 && state.query.feed.is_empty()
                 && !state.publications.is_empty()
             {
                 ui.add_space(6.);
                 let archivable = state.query.scope == crate::domain::Scope::Inbox;
-                for (host, count) in state.publications {
-                    let (outer, response) =
-                        ui.allocate_exact_size(vec2(ui.available_width(), 60.), Sense::click());
-                    let rect = outer.shrink2(vec2(8., 2.));
+                for publication in state.publications {
+                    let (host, count) = (&publication.host, &publication.count);
+                    // Same geometry as an article row so grouped and flat lists align.
+                    let (rect, response) =
+                        ui.allocate_exact_size(vec2(ui.available_width(), 86.), Sense::click());
                     let menu_rect = egui::Rect::from_center_size(
-                        egui::pos2(rect.right() - 22., rect.center().y),
+                        egui::pos2(rect.right() - 30., rect.center().y),
                         vec2(28., 28.),
                     );
-                    let hovered = ui.rect_contains_pointer(outer);
-                    if hovered {
-                        ui.painter().rect_filled(rect, 10., colors.hover);
+                    let hovered = ui.rect_contains_pointer(rect);
+                    let painter = ui.painter().with_clip_rect(rect);
+                    painter.rect_filled(
+                        rect,
+                        0.,
+                        if hovered {
+                            colors.hover
+                        } else {
+                            colors.article
+                        },
+                    );
+                    painter.line_segment(
+                        [rect.left_bottom(), rect.right_bottom()],
+                        egui::Stroke::new(1., colors.divider),
+                    );
+                    let tile = egui::Rect::from_min_size(rect.min + vec2(16., 25.), vec2(36., 36.));
+                    painter.rect_filled(tile, 5., colors.selected);
+                    if let Some(image) = state.logos.get(&format!("publication-icon:{host}")) {
+                        painter.image(
+                            image.id(),
+                            tile.shrink(2.),
+                            egui::Rect::from_min_max(egui::pos2(0., 0.), egui::pos2(1., 1.)),
+                            egui::Color32::WHITE,
+                        );
+                    } else {
+                        let initial = publication
+                            .name
+                            .chars()
+                            .find(|c| c.is_alphanumeric())
+                            .unwrap_or('·')
+                            .to_uppercase()
+                            .to_string();
+                        painter.text(
+                            tile.center(),
+                            Align2::CENTER_CENTER,
+                            initial,
+                            FontId::new(20., egui::FontFamily::Name("Georgia".into())),
+                            colors.green,
+                        );
                     }
-                    let tile = egui::Rect::from_min_size(
-                        egui::pos2(rect.left() + 10., rect.center().y - 18.),
-                        vec2(36., 36.),
-                    );
-                    ui.painter().rect_filled(tile, 10., colors.selected);
-                    let initial = host
-                        .chars()
-                        .find(|c| c.is_alphanumeric())
-                        .unwrap_or('·')
-                        .to_uppercase()
-                        .to_string();
-                    ui.painter().text(
-                        tile.center() + vec2(0., 1.),
-                        Align2::CENTER_CENTER,
-                        initial,
-                        FontId::new(18., egui::FontFamily::Name("Georgia".into())),
-                        colors.green,
-                    );
-                    let text_x = tile.right() + 12.;
+                    let text_x = rect.left() + 62.;
+                    let text_width = (menu_rect.left() - 8. - text_x).max(20.);
                     let mut title = egui::text::LayoutJob::simple(
-                        host.clone(),
-                        FontId::new(13.5, egui::FontFamily::Name("System Semibold".into())),
+                        publication.name.clone(),
+                        FontId::new(14., egui::FontFamily::Name("System Semibold".into())),
                         colors.ink,
-                        (menu_rect.left() - 52. - text_x).max(20.),
+                        text_width,
                     );
                     title.wrap.max_rows = 1;
+                    title.wrap.break_anywhere = true;
                     let title = ui.fonts_mut(|f| f.layout_job(title));
-                    ui.painter().galley(
-                        egui::pos2(text_x, rect.center().y - 17.),
+                    painter.galley(
+                        egui::pos2(text_x, rect.center().y - title.size().y - 1.),
                         title,
                         colors.ink,
                     );
-                    ui.painter().text(
-                        egui::pos2(text_x, rect.center().y + 3.),
-                        Align2::LEFT_TOP,
-                        if *count == 1 {
-                            "1 article".into()
+                    let articles = if *count == 1 {
+                        "1 article".to_owned()
+                    } else {
+                        format!("{count} articles")
+                    };
+                    let mut detail = egui::text::LayoutJob::simple(
+                        if publication.name == *host {
+                            articles
                         } else {
-                            format!("{count} articles")
+                            format!("{host} · {articles}")
                         },
-                        FontId::proportional(11.5),
+                        FontId::proportional(11.),
                         colors.muted,
+                        text_width,
                     );
-                    let badge_text = ui.fonts_mut(|f| {
-                        f.layout_no_wrap(count.to_string(), FontId::proportional(11.), colors.muted)
-                    });
-                    let badge = egui::Rect::from_center_size(
-                        egui::pos2(
-                            menu_rect.left() - 8. - (badge_text.size().x + 14.) / 2.,
-                            rect.center().y,
-                        ),
-                        vec2(badge_text.size().x + 14., 20.),
-                    );
-                    ui.painter().rect_filled(badge, 10., colors.soft);
-                    ui.painter().galley(
-                        badge.center() - badge_text.size() / 2.,
-                        badge_text,
+                    detail.wrap.max_rows = 1;
+                    detail.wrap.break_anywhere = true;
+                    let detail = ui.fonts_mut(|f| f.layout_job(detail));
+                    painter.galley(
+                        egui::pos2(text_x, rect.center().y + 3.),
+                        detail,
                         colors.muted,
                     );
                     let menu_id = ui.id().with(("publication-menu", host));
                     let menu_open = egui::Popup::is_id_open(ui.ctx(), menu_id);
                     if hovered || menu_open {
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(menu_rect), |ui| {
+                        {
+                            // A child UI, not a scope: a scope would allocate the
+                            // menu rect in the list and pull the next row up.
+                            let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(menu_rect));
                             let more = controls::icon_button(
                                 ui,
                                 Icon::More,
@@ -439,13 +490,14 @@ pub fn draw(ui: &mut Ui, state: State<'_>, actions: &mut Vec<Action>) -> f32 {
                                 .align(egui::emath::RectAlign::BOTTOM_END)
                                 .align_alternatives(&[])
                                 .show(|ui| {
+                                    controls::menu_style(ui);
                                     let mut q = state.query.clone();
                                     q.publication = host.clone();
                                     if archivable
-                                        && controls::action(
+                                        && controls::menu_item(
                                             ui,
                                             "Archive all articles in this publication",
-                                            ButtonKind::Quiet,
+                                            false,
                                         )
                                         .clicked()
                                     {
@@ -454,10 +506,13 @@ pub fn draw(ui: &mut Ui, state: State<'_>, actions: &mut Vec<Action>) -> f32 {
                                         )));
                                         ui.close();
                                     }
-                                    if controls::action(
+                                    if archivable {
+                                        ui.separator();
+                                    }
+                                    if controls::menu_item(
                                         ui,
-                                        "Delete all articles in this publication",
-                                        ButtonKind::Danger,
+                                        "Delete all articles in this publication…",
+                                        true,
                                     )
                                     .clicked()
                                     {
@@ -468,7 +523,7 @@ pub fn draw(ui: &mut Ui, state: State<'_>, actions: &mut Vec<Action>) -> f32 {
                                         ui.close();
                                     }
                                 });
-                        });
+                        }
                     } else {
                         icons::draw(
                             ui,
@@ -680,10 +735,12 @@ pub fn draw(ui: &mut Ui, state: State<'_>, actions: &mut Vec<Action>) -> f32 {
                     date_galley,
                     colors.muted,
                 );
+                // Unread marker in views that mix read states: the conventional
+                // left-margin dot, level with the title.
                 if state.view != View::Inbox && article.read_at.is_none() {
                     painter.circle_filled(
-                        egui::pos2(icon.center().x, rect.bottom() - 13.),
-                        2.3,
+                        egui::pos2(rect.left() + 8., rect.top() + 18.),
+                        3.,
                         colors.green,
                     );
                 }

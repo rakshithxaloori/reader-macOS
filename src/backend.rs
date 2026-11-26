@@ -136,7 +136,7 @@ pub enum Event {
         generation: u64,
         offset: usize,
         articles: Vec<Article>,
-        publications: Vec<(String, u32)>,
+        publications: Vec<crate::domain::Publication>,
         logos: Vec<(String, Vec<u8>)>,
         total: u32,
         has_more: bool,
@@ -381,13 +381,17 @@ impl Backend {
                                 generation,
                                 articles,
                                 logos,
+                                publications,
                                 ..
                             } = &mut event
                                 && db_compat::is_lean(&c).unwrap_or(false)
                             {
                                 // Icons already read from the cache need no
                                 // second cache read on the icon thread.
+                                // Visible article rows first, then grouped
+                                // publication rows; the icon worker dedupes hosts.
                                 let mut requests = crate::icons::requests(articles);
+                                requests.extend(crate::icons::host_requests(publications));
                                 requests.retain(|r| !logos.iter().any(|(key, _)| *key == r.key()));
                                 for article in articles {
                                     article.logo_url = crate::icons::identity(article);
@@ -437,15 +441,22 @@ fn dispatch(c: &mut rusqlite::Connection, cmd: Command) -> anyhow::Result<Vec<Ev
             generation,
             query,
             offset,
-        } => Event::List {
-            generation,
-            offset,
-            articles: library::articles(c, &query, offset)?,
-            logos: library::logos(c, &library::articles(c, &query, offset)?)?,
-            publications: library::publications(c, &query)?,
-            total: library::matching_count(c, &query)?,
-            has_more: offset + 60 < (library::matching_count(c, &query)? as usize),
-        },
+        } => {
+            let articles = library::articles(c, &query, offset)?;
+            let publications = library::publications(c, &query)?;
+            let mut logos = library::logos(c, &articles)?;
+            logos.extend(library::publication_logos(c, &publications)?);
+            let total = library::matching_count(c, &query)?;
+            Event::List {
+                generation,
+                offset,
+                articles,
+                logos,
+                publications,
+                total,
+                has_more: offset + 60 < total as usize,
+            }
+        }
         Command::Reconcile {
             generation,
             query,
@@ -463,12 +474,15 @@ fn dispatch(c: &mut rusqlite::Connection, cmd: Command) -> anyhow::Result<Vec<Ev
                 }
             }
             let has_more = articles.len() < (total as usize);
+            let publications = library::publications(&snapshot, &query)?;
+            let mut logos = library::logos(&snapshot, &articles)?;
+            logos.extend(library::publication_logos(&snapshot, &publications)?);
             Event::List {
                 generation,
                 offset: 0,
-                logos: library::logos(&snapshot, &articles)?,
+                logos,
                 articles,
-                publications: library::publications(&snapshot, &query)?,
+                publications,
                 total,
                 has_more,
             }

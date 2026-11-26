@@ -76,7 +76,7 @@ pub struct App {
     backend: Backend,
     view: View,
     rows: Vec<Article>,
-    publications: Vec<(String, u32)>,
+    publications: Vec<crate::domain::Publication>,
     counts: Counts,
     feeds: Vec<Feed>,
     magazines: Vec<Magazine>,

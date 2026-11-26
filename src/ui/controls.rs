@@ -50,6 +50,11 @@ pub enum ButtonKind {
 pub fn action(ui: &mut Ui, label: &str, kind: ButtonKind) -> Response {
     let colors = crate::theme::palette(ui.ctx());
     let (fill, border, ink) = match kind {
+        // A disabled filled button reads as a quiet outline instead of a
+        // washed-out accent, so it is plainly unavailable but still legible.
+        ButtonKind::Primary | ButtonKind::Danger if !ui.is_enabled() => {
+            (colors.soft, colors.divider, colors.muted)
+        }
         ButtonKind::Primary => (colors.green, colors.green, colors.on_accent),
         ButtonKind::Secondary => (colors.reader, colors.divider, colors.ink),
         ButtonKind::Quiet => (Color32::TRANSPARENT, Color32::TRANSPARENT, colors.green),
@@ -65,6 +70,42 @@ pub fn action(ui: &mut Ui, label: &str, kind: ButtonKind) -> Response {
     interaction_fill(ui, &response, false);
     focus(ui, &response);
     response
+}
+
+/// One row of a popup menu: full width, ink text, hover wash. Danger rows use
+/// the danger color so destructive commands stand apart from ordinary ones.
+pub fn menu_item(ui: &mut Ui, label: &str, danger: bool) -> Response {
+    let colors = crate::theme::palette(ui.ctx());
+    let font = egui::FontId::proportional(12.5);
+    // Placeholder color, so the paint call below decides ink versus danger.
+    let text = ui.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font, Color32::PLACEHOLDER));
+    let width = ui.available_width().max(text.size().x + 20.);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 28.), egui::Sense::click());
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(
+            rect,
+            6.,
+            if danger {
+                colors.danger_fill
+            } else {
+                colors.hover
+            },
+        );
+    }
+    ui.painter().galley(
+        egui::pos2(rect.left() + 10., rect.center().y - text.size().y / 2.),
+        text,
+        if danger { colors.danger } else { colors.ink },
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response
+}
+
+/// Popup menus share one width (rows fill it) and tight row spacing.
+pub fn menu_style(ui: &mut Ui) {
+    ui.set_min_width(270.);
+    ui.set_max_width(270.);
+    ui.spacing_mut().item_spacing.y = 1.;
 }
 
 pub fn icon_button(ui: &mut Ui, icon: icons::Icon, label: &str, selected: bool) -> Response {
@@ -125,25 +166,25 @@ fn icon_button_plain(ui: &mut Ui, icon: icons::Icon, label: &str, selected: bool
 /// keyboard and VoiceOver users reach every option directly.
 pub fn segmented(ui: &mut Ui, labels: &[&str], selected: usize) -> Option<usize> {
     let colors = crate::theme::palette(ui.ctx());
-    let font = egui::FontId::proportional(11.5);
+    let font = egui::FontId::proportional(12.);
     let widths: Vec<f32> = labels
         .iter()
         .map(|label| {
             ui.fonts_mut(|f| f.layout_no_wrap((*label).to_owned(), font.clone(), colors.ink))
                 .size()
                 .x
-                + 20.
+                + 22.
         })
         .collect();
     let (outer, _) = ui.allocate_exact_size(
-        vec2(widths.iter().sum::<f32>() + 4., 26.),
+        vec2(widths.iter().sum::<f32>() + 4., 28.),
         egui::Sense::hover(),
     );
     ui.painter().rect_filled(outer, 7., colors.soft);
     let mut chosen = None;
     let mut x = outer.left() + 2.;
     for (index, (label, width)) in labels.iter().zip(&widths).enumerate() {
-        let rect = egui::Rect::from_min_size(egui::pos2(x, outer.top() + 2.), vec2(*width, 22.));
+        let rect = egui::Rect::from_min_size(egui::pos2(x, outer.top() + 2.), vec2(*width, 24.));
         x += width;
         let response = ui.interact(
             rect,
@@ -311,8 +352,9 @@ pub fn status(ui: &mut Ui, state: Status) {
             color.b(),
             20,
         ))
-        .corner_radius(5)
-        .inner_margin(egui::Margin::symmetric(8, 4))
+        // Fully rounded so a status reads as a tag, never as a button.
+        .corner_radius(11)
+        .inner_margin(egui::Margin::symmetric(9, 3))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 5.;
@@ -346,6 +388,16 @@ pub fn focus(ui: &Ui, response: &Response) {
     }
 }
 
+/// Every modal shares one backdrop. Dark mode needs a deeper dim than egui's
+/// default to separate the sheet from an already dark window.
+pub fn modal(id: egui::Id, ctx: &egui::Context) -> egui::Modal {
+    egui::Modal::new(id).backdrop_color(if ctx.global_style().visuals.dark_mode {
+        Color32::from_black_alpha(150)
+    } else {
+        Color32::from_black_alpha(80)
+    })
+}
+
 pub fn panel(ui: &Ui) -> egui::Frame {
     let colors = crate::theme::palette(ui.ctx());
     egui::Frame::new()
@@ -363,8 +415,8 @@ pub fn badge(ui: &mut Ui, label: &str, color: Color32) {
             color.b(),
             20,
         ))
-        .corner_radius(5)
-        .inner_margin(egui::Margin::symmetric(8, 4))
+        .corner_radius(11)
+        .inner_margin(egui::Margin::symmetric(9, 3))
         .show(ui, |ui| {
             ui.label(RichText::new(label).size(11.).color(color));
         });

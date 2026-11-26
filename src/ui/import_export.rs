@@ -16,8 +16,8 @@ pub fn draw(
     actions: &mut Vec<Action>,
 ) {
     let colors = crate::theme::palette(ui.ctx());
-    egui::ScrollArea::vertical().id_salt("import-export").show(ui, |ui| {
-        ui.set_max_width(ui.available_width().min(880.));
+    egui::ScrollArea::vertical().id_salt("import-export").auto_shrink([false, false]).show(ui, |ui| {
+        ui.set_max_width(ui.available_width().min(super::PAGE_WIDTH));
         super::secondary::header(ui, "Import / export", "Bring your reading list with you.");
         controls::panel(ui).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -93,9 +93,14 @@ fn report(ui: &mut Ui, run: &Progress, actions: &mut Vec<Action>) {
                 other => controls::badge(ui, other, colors.muted),
             };
             ui.label(
-                RichText::new(format!("{} · {} records", run.format, run.total))
-                    .size(12.)
-                    .color(colors.muted),
+                RichText::new(format!(
+                    "{} · {} {}",
+                    run.format,
+                    run.total,
+                    if run.total == 1 { "record" } else { "records" }
+                ))
+                .size(12.)
+                .color(colors.muted),
             );
         });
         ui.add_space(12.);
@@ -138,9 +143,14 @@ fn report(ui: &mut Ui, run: &Progress, actions: &mut Vec<Action>) {
                     },
                 ),
             ] {
+                // Empty categories add nothing; Added always shows so a run
+                // never renders an empty summary.
+                if count == 0 && label != "Added" {
+                    continue;
+                }
                 ui.vertical(|ui| {
                     ui.set_min_width(76.);
-                    ui.label(RichText::new(count.to_string()).size(20.).color(color));
+                    ui.label(RichText::new(count.to_string()).size(17.).color(color));
                     ui.label(RichText::new(label).size(11.).color(colors.muted));
                 });
             }
